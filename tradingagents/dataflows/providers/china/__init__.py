@@ -27,6 +27,14 @@ except ImportError:
     BaostockProvider = None
     BAOSTOCK_AVAILABLE = False
 
+# 导入 SQLite 提供器
+try:
+    from .sqlite import SQLiteProvider
+    SQLITE_AVAILABLE = True
+except ImportError:
+    SQLiteProvider = None
+    SQLITE_AVAILABLE = False
+
 # 导入基本面快照工具
 try:
     from .fundamentals_snapshot import get_fundamentals_snapshot
@@ -42,6 +50,8 @@ __all__ = [
     'TUSHARE_AVAILABLE',
     'BaostockProvider',
     'BAOSTOCK_AVAILABLE',
+    'SQLiteProvider',
+    'SQLITE_AVAILABLE',
     'get_fundamentals_snapshot',
     'FUNDAMENTALS_SNAPSHOT_AVAILABLE',
 ]

@@ -36,6 +36,7 @@ class ChinaDataSource(Enum):
     TUSHARE = DataSourceCode.TUSHARE
     AKSHARE = DataSourceCode.AKSHARE
     BAOSTOCK = DataSourceCode.BAOSTOCK
+    SQLITE = DataSourceCode.SQLITE
 
 
 class USDataSource(Enum):
@@ -139,6 +140,7 @@ class DataSourceManager:
                     DataSourceCode.TUSHARE: ChinaDataSource.TUSHARE,
                     DataSourceCode.AKSHARE: ChinaDataSource.AKSHARE,
                     DataSourceCode.BAOSTOCK: ChinaDataSource.BAOSTOCK,
+                    DataSourceCode.SQLITE: ChinaDataSource.SQLITE,
                 }
 
                 result = []
@@ -166,6 +168,7 @@ class DataSourceManager:
             ChinaDataSource.AKSHARE,
             ChinaDataSource.TUSHARE,
             ChinaDataSource.BAOSTOCK,
+            ChinaDataSource.SQLITE,
         ]
         # 只返回可用的数据源
         return [s for s in default_order if s in self.available_sources]
@@ -217,6 +220,7 @@ class DataSourceManager:
             DataSourceCode.TUSHARE: ChinaDataSource.TUSHARE,
             DataSourceCode.AKSHARE: ChinaDataSource.AKSHARE,
             DataSourceCode.BAOSTOCK: ChinaDataSource.BAOSTOCK,
+            DataSourceCode.SQLITE: ChinaDataSource.SQLITE,
         }
 
         return source_mapping.get(env_source, ChinaDataSource.AKSHARE)
@@ -501,6 +505,20 @@ class DataSourceManager:
         else:
             logger.info("ℹ️ BaoStock数据源已在数据库中禁用")
 
+        # 检查SQLite
+        if 'sqlite' in enabled_sources_in_db:
+            try:
+                db_path = os.getenv("SQLITE_DB_PATH", "daily.db")
+                if os.path.exists(db_path):
+                    available.append(ChinaDataSource.SQLITE)
+                    logger.info(f"✅ SQLite数据源可用且已启用 (路径: {db_path})")
+                else:
+                    logger.warning(f"⚠️ SQLite数据源不可用: 数据库文件不存在 ({db_path})")
+            except Exception as e:
+                logger.warning(f"⚠️ SQLite数据源不可用: {e}")
+        else:
+            logger.info("ℹ️ SQLite数据源已在数据库中禁用")
+
         # TDX (通达信) 已移除
         # 不再检查和支持 TDX 数据源
 
@@ -559,6 +577,8 @@ class DataSourceManager:
             return self._get_akshare_adapter()
         elif self.current_source == ChinaDataSource.BAOSTOCK:
             return self._get_baostock_adapter()
+        elif self.current_source == ChinaDataSource.SQLITE:
+            return self._get_sqlite_adapter()
         # TDX 已移除
         else:
             raise ValueError(f"不支持的数据源: {self.current_source}")
@@ -597,6 +617,15 @@ class DataSourceManager:
             return get_baostock_provider()
         except ImportError as e:
             logger.error(f"❌ BaoStock适配器导入失败: {e}")
+            return None
+
+    def _get_sqlite_adapter(self):
+        """获取SQLite提供器"""
+        try:
+            from .providers.china.sqlite import get_sqlite_provider
+            return get_sqlite_provider()
+        except ImportError as e:
+            logger.error(f"❌ SQLite适配器导入失败: {e}")
             return None
 
     # TDX 适配器已移除
@@ -942,6 +971,10 @@ class DataSourceManager:
                 from .providers.china.baostock import get_baostock_provider
                 provider = get_baostock_provider()
                 df = provider.get_stock_data(symbol, start_date, end_date)
+            elif self.current_source == ChinaDataSource.SQLITE:
+                from .providers.china.sqlite import get_sqlite_provider
+                provider = get_sqlite_provider()
+                df = provider.get_stock_data(symbol, start_date, end_date)
 
             if df is not None and not df.empty:
                 logger.info(f"✅ [DataFrame接口] 从 {self.current_source.value} 获取成功: {len(df)}条")
@@ -968,6 +1001,10 @@ class DataSourceManager:
                     elif source == ChinaDataSource.BAOSTOCK:
                         from .providers.china.baostock import get_baostock_provider
                         provider = get_baostock_provider()
+                        df = provider.get_stock_data(symbol, start_date, end_date)
+                    elif source == ChinaDataSource.SQLITE:
+                        from .providers.china.sqlite import get_sqlite_provider
+                        provider = get_sqlite_provider()
                         df = provider.get_stock_data(symbol, start_date, end_date)
 
                     if df is not None and not df.empty:
@@ -1076,6 +1113,9 @@ class DataSourceManager:
             elif self.current_source == ChinaDataSource.BAOSTOCK:
                 result = self._get_baostock_data(symbol, start_date, end_date, period)
                 actual_source = "baostock"
+            elif self.current_source == ChinaDataSource.SQLITE:
+                result = self._get_sqlite_data(symbol, start_date, end_date, period)
+                actual_source = "sqlite"
             # TDX 已移除
             else:
                 result = f"❌ 不支持的数据源: {self.current_source.value}"
@@ -1354,6 +1394,31 @@ class DataSourceManager:
         else:
             return f"❌ 未能获取{symbol}的股票数据"
 
+    def _get_sqlite_data(self, symbol: str, start_date: str, end_date: str, period: str = "daily") -> str:
+        """使用SQLite获取数据"""
+        from .providers.china.sqlite import get_sqlite_provider
+        provider = get_sqlite_provider()
+
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        data = loop.run_until_complete(provider.get_historical_data(symbol, start_date, end_date, period))
+
+        if data is not None and not data.empty:
+            stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+            stock_name = stock_info.get('name', f'股票{symbol}') if stock_info else f'股票{symbol}'
+            result = self._format_stock_data_response(data, symbol, stock_name, start_date, end_date)
+            return result
+        else:
+            return f"❌ 未能从SQLite获取{symbol}的数据"
+
     # TDX 数据获取方法已移除
     # def _get_tdx_data(self, symbol: str, start_date: str, end_date: str, period: str = "daily") -> str:
     #     """使用TDX获取多周期数据 (已移除)"""
@@ -1404,6 +1469,8 @@ class DataSourceManager:
                         result = self._get_akshare_data(symbol, start_date, end_date, period)
                     elif source == ChinaDataSource.BAOSTOCK:
                         result = self._get_baostock_data(symbol, start_date, end_date, period)
+                    elif source == ChinaDataSource.SQLITE:
+                        result = self._get_sqlite_data(symbol, start_date, end_date, period)
                     # TDX 已移除
                     else:
                         logger.warning(f"⚠️ 未知数据源: {source.value}")

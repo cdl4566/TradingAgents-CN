@@ -31,6 +31,7 @@ class DataSourceCode(str, Enum):
     TUSHARE = "tushare"      # Tushare - 专业A股数据
     AKSHARE = "akshare"      # AKShare - 开源金融数据（A股+港股）
     BAOSTOCK = "baostock"    # BaoStock - 免费A股数据
+    SQLITE = "sqlite"        # SQLite - 本地日线数据
     
     # ==================== 美股数据源 ====================
     YFINANCE = "yfinance"         # yfinance - Yahoo Finance Python库
