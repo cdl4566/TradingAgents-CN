@@ -442,11 +442,11 @@ class DataSourceManager:
             else:
                 logger.warning("⚠️ [数据源配置] 数据库中没有数据源配置，将检查所有已安装的数据源")
                 # 如果数据库中没有配置，默认所有数据源都启用
-                enabled_sources_in_db = {'mongodb', 'tushare', 'akshare', 'baostock'}
+                enabled_sources_in_db = {'mongodb', 'tushare', 'akshare', 'baostock', 'sqlite'}
         except Exception as e:
             logger.warning(f"⚠️ [数据源配置] 从数据库读取失败: {e}，将检查所有已安装的数据源")
             # 如果读取失败，默认所有数据源都启用
-            enabled_sources_in_db = {'mongodb', 'tushare', 'akshare', 'baostock'}
+            enabled_sources_in_db = {'mongodb', 'tushare', 'akshare', 'baostock', 'sqlite'}
 
         # 检查MongoDB（最高优先级）
         if self.use_mongodb_cache and 'mongodb' in enabled_sources_in_db:

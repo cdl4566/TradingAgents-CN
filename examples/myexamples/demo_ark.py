@@ -62,15 +62,30 @@ def main():
         print('✅ TradingAgentsGraph 初始化成功')
         print()
 
-        # 强制切换数据源为 AKShare（确保市场/基本面数据从 AKShare 获取）
+        # 默认将市场数据设置为本地 SQLite，同时在运行时为基本面切换到 AKShare
         try:
             from tradingagents.dataflows.data_source_manager import get_data_source_manager, ChinaDataSource
 
             mgr = get_data_source_manager()
-            switched = mgr.set_current_source(ChinaDataSource.AKSHARE)
-            print(f'🔧 数据源切换到 AKShare: {switched}')
+            # 先设置为 SQLITE，确保 Market Analyst 获取日线来自本地
+            mgr.set_current_source(ChinaDataSource.SQLITE)
+            print(f'🔧 默认数据源设置为 SQLite（用于市场/日线数据）')
+
+            # 定义进度回调：当进入基本面节点时切换到 AKShare；当回到市场节点时切回 SQLite
+            def progress_callback(message):
+                try:
+                    text = str(message)
+                    if '基本面' in text or 'Fundamentals' in text:
+                        mgr.set_current_source(ChinaDataSource.AKSHARE)
+                        print('🔧 进度回调：数据源切换到 AKShare（用于基本面）')
+                    elif '市场' in text or 'Market' in text:
+                        mgr.set_current_source(ChinaDataSource.SQLITE)
+                        print('🔧 进度回调：数据源切换回 SQLite（用于市场）')
+                except Exception as _e:
+                    print('⚠️ progress_callback 错误:', _e)
+
         except Exception as e:
-            print('⚠️ 无法强制切换数据源到 AKShare:', e)
+            print('⚠️ 配置数据源时发生错误:', e)
 
         # 校验 LLM 配置是否指向 Ark (custom_openai)
         try:
@@ -98,7 +113,12 @@ def main():
 
         print(f'📈 开始分析: {stock_symbol} ({analysis_date})')
         print('⏳ 请稍等，正在执行简化分析流程...')
-        state, decision = ta.propagate(stock_symbol, analysis_date)
+        # 传入 progress_callback 以便在节点切换时调整数据源（保证市场用 SQLite，基本面用 AKShare）
+        try:
+            state, decision = ta.propagate(stock_symbol, analysis_date, progress_callback=progress_callback)
+        except NameError:
+            # 若 progress_callback 未定义（异常情况），回退到不带回调的调用
+            state, decision = ta.propagate(stock_symbol, analysis_date)
 
         print('\n🎯 分析结果:')
         print('----------------------------------------')
