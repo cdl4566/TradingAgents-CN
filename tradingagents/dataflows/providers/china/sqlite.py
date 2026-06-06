@@ -30,7 +30,7 @@ class SQLiteProvider(BaseStockDataProvider):
                 logger.warning(f"SQLite数据库文件不存在: {self.db_path}")
                 self.connected = False
                 return False
-            self.conn = sqlite3.connect(self.db_path)
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
             self.connected = True
             logger.info(f"SQLite连接成功: {self.db_path}")
@@ -49,7 +49,25 @@ class SQLiteProvider(BaseStockDataProvider):
 
     def _get_table_name(self, code: str) -> str:
         """股票代码 -> 表名: 000001.SZ -> tb_000001_SZ"""
-        return "tb_" + code.replace('.', '_')
+        if not code:
+            return ""
+
+        c = str(code).strip()
+
+        # If code has no market suffix, try to infer it from prefix
+        if '.' not in c:
+            if c.startswith('6'):
+                c = c + '.SH'
+            elif c.startswith(('0', '3')):
+                c = c + '.SZ'
+            elif c.startswith('920'):
+                c = c + '.BJ'
+            else:
+                # default to SZ for unknown prefixes
+                c = c + '.SZ'
+
+        # Replace dot with underscore and normalize to upper for suffix
+        return "tb_" + c.replace('.', '_').upper()
 
     def _parse_code(self, code: str) -> str:
         """标准化股票代码: 去掉后缀提取6位数字"""
@@ -61,32 +79,25 @@ class SQLiteProvider(BaseStockDataProvider):
             return None
 
         clean_code = self._parse_code(code)
-        table_name = self._get_table_name(code)
 
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
-            if not cursor.fetchone():
-                return None
+            # 优先使用写死的股票信息
+            info = self._HARDCODED_STOCK_INFO.get(clean_code)
+            if info:
+                return dict(info)
 
-            # 查最新一条记录获取ts_code
-            cursor.execute(f'SELECT ts_code FROM "{table_name}" LIMIT 1')
-            row = cursor.fetchone()
-
-            ts_code = row['ts_code'] if row else code
             # 确定市场
-            if code.endswith('.SZ') or 'SZ' in code.upper():
-                market = "SZ"
-            elif code.endswith('.SH') or 'SH' in code.upper():
+            if clean_code.startswith('6'):
                 market = "SH"
+            elif clean_code.startswith(('0', '3')):
+                market = "SZ"
             else:
-                market = "SZ" if clean_code.startswith(('0', '3')) else "SH"
+                market = "SZ"
 
             return {
                 "code": clean_code,
                 "name": f"股票{clean_code}",
                 "symbol": clean_code,
-                "full_symbol": ts_code if row else f"{clean_code}.{market}",
                 "market": market,
                 "industry": "未知",
                 "area": "未知",
@@ -145,25 +156,17 @@ class SQLiteProvider(BaseStockDataProvider):
         table_name = self._get_table_name(symbol)
 
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
-            if not cursor.fetchone():
-                logger.warning(f"表 {table_name} 不存在")
-                return None
-
             # 构建查询
             conditions = []
             params = []
 
             if start_date:
-                start_str = str(start_date).replace('-', '')
-                start_formatted = f"{start_str[:4]}-{start_str[4:6]}-{start_str[6:8]}"
+                start_formatted = str(start_date).replace('-', '')
                 conditions.append("trade_date >= ?")
                 params.append(start_formatted)
 
             if end_date:
-                end_str = str(end_date).replace('-', '')
-                end_formatted = f"{end_str[:4]}-{end_str[4:6]}-{end_str[6:8]}"
+                end_formatted = str(end_date).replace('-', '')
                 conditions.append("trade_date <= ?")
                 params.append(end_formatted)
 
@@ -188,6 +191,27 @@ class SQLiteProvider(BaseStockDataProvider):
 
     # ==================== 同步便捷方法（供DataSourceManager直接调用） ====================
 
+    # TODO: 后续从本地 stock_basic_info 表或 JSON 文件读取，目前先写死
+    _HARDCODED_STOCK_INFO = {
+        "002049": {
+            "symbol": "002049",
+            "name": "紫光国微",
+            "industry": "半导体",
+            "area": "北京",
+            "list_date": "2005-06-16",
+            "market": "SZ",
+            "source": "sqlite",
+        },
+    }
+
+    def get_stock_info(self, symbol: str) -> Dict[str, Any]:
+        """同步获取股票基本信息（供 DataSourceManager.get_stock_info 调用）"""
+        info = self._HARDCODED_STOCK_INFO.get(symbol)
+        if info:
+            return dict(info)  # 返回副本，避免外部修改
+        # 未写死的股票，返回默认值（会被判定为无效，触发降级到 AKShare）
+        return {"symbol": symbol, "name": f"股票{symbol}", "industry": "未知", "area": "未知", "list_date": "未知", "market": "未知", "source": "sqlite"}
+
     def get_stock_data(self, symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
         """同步获取股票数据（供get_stock_dataframe调用）"""
         if not self.connected:
@@ -195,10 +219,8 @@ class SQLiteProvider(BaseStockDataProvider):
 
         table_name = self._get_table_name(symbol)
         try:
-            start_str = str(start_date).replace('-', '')
-            end_str = str(end_date).replace('-', '')
-            start_formatted = f"{start_str[:4]}-{start_str[4:6]}-{start_str[6:8]}"
-            end_formatted = f"{end_str[:4]}-{end_str[4:6]}-{end_str[6:8]}"
+            start_formatted = str(start_date).replace('-', '')
+            end_formatted = str(end_date).replace('-', '')
 
             query = f'SELECT * FROM "{table_name}" WHERE trade_date >= ? AND trade_date <= ? ORDER BY trade_date'
             df = pd.read_sql(query, self.conn, params=[start_formatted, end_formatted])

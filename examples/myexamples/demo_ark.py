@@ -15,36 +15,37 @@ load_dotenv()
 
 
 def main():
-    """使用火山引擎 Ark 模型演示 TradingAgents 简化分析。"""
+    """使用智谱 AI GLM 模型演示 TradingAgents 简化分析。"""
     print('环境变量加载检查:')
-    print(f"ARK_API_KEY: {os.getenv('ARK_API_KEY')}")
+    print(f"ZHIPUAI_API_KEY: {os.getenv('ZHIPUAI_API_KEY')}")
     print(f"CUSTOM_OPENAI_API_KEY: {os.getenv('CUSTOM_OPENAI_API_KEY')}")
     print()
 
-    ark_key = os.getenv('ARK_API_KEY')
-    if not ark_key:
-        print('❌ 未找到 ARK_API_KEY 环境变量，请先在 .env 中配置火山引擎 API Key。')
-        print('可使用示例: ARK_API_KEY=your_ark_api_key')
+    zhipuai_key = os.getenv('ZHIPUAI_API_KEY')
+    if not zhipuai_key:
+        print('❌ 未找到 ZHIPUAI_API_KEY 环境变量，请先在 .env 中配置智谱 AI API Key。')
+        print('可使用示例: ZHIPUAI_API_KEY=your_zhipuai_api_key')
         return
 
     # 兼容 TradingAgentsGraph 的 custom_openai 分支
     if not os.getenv('CUSTOM_OPENAI_API_KEY'):
-        os.environ['CUSTOM_OPENAI_API_KEY'] = ark_key
+        os.environ['CUSTOM_OPENAI_API_KEY'] = zhipuai_key
 
-    print(f'✅ 已读取 Ark API Key，长度: {len(ark_key)}')
+    print(f'✅ 已读取智谱 AI API Key，长度: {len(zhipuai_key)}')
     print()
 
     config = DEFAULT_CONFIG.copy()
     config['llm_provider'] = 'custom_openai'
-    config['custom_openai_base_url'] = 'https://ark.cn-beijing.volces.com/api/v3'
-    config['deep_think_llm'] = 'doubao-seed-1-8-251228'
-    config['quick_think_llm'] = 'doubao-seed-1-8-251228'
+    config['custom_openai_base_url'] = 'https://open.bigmodel.cn/api/paas/v4/'
+    config['deep_think_llm'] = 'glm-4-flash'
+    config['quick_think_llm'] = 'glm-4-flash'
     config['max_debate_rounds'] = 1
     config['memory_enabled'] = False
     config['online_tools'] = False
 
     # 仅启用两种分析师：市场分析师 + 基本面分析师
-    selected_analysts = ['market', 'fundamentals']
+    # selected_analysts = ['market', 'fundamentals']
+    selected_analysts = ['market']
 
     print('📊 当前演示配置:')
     print(f"  llm_provider: {config['llm_provider']}")
@@ -62,27 +63,13 @@ def main():
         print('✅ TradingAgentsGraph 初始化成功')
         print()
 
-        # 默认将市场数据设置为本地 SQLite，同时在运行时为基本面切换到 AKShare
+        # 所有数据（市场+基本面）统一走 SQLite，不依赖 AKShare
         try:
             from tradingagents.dataflows.data_source_manager import get_data_source_manager, ChinaDataSource
 
             mgr = get_data_source_manager()
-            # 先设置为 SQLITE，确保 Market Analyst 获取日线来自本地
             mgr.set_current_source(ChinaDataSource.SQLITE)
-            print(f'🔧 默认数据源设置为 SQLite（用于市场/日线数据）')
-
-            # 定义进度回调：当进入基本面节点时切换到 AKShare；当回到市场节点时切回 SQLite
-            def progress_callback(message):
-                try:
-                    text = str(message)
-                    if '基本面' in text or 'Fundamentals' in text:
-                        mgr.set_current_source(ChinaDataSource.AKSHARE)
-                        print('🔧 进度回调：数据源切换到 AKShare（用于基本面）')
-                    elif '市场' in text or 'Market' in text:
-                        mgr.set_current_source(ChinaDataSource.SQLITE)
-                        print('🔧 进度回调：数据源切换回 SQLite（用于市场）')
-                except Exception as _e:
-                    print('⚠️ progress_callback 错误:', _e)
+            print('🔧 数据源统一设置为 SQLite（市场+基本面均走本地）')
 
         except Exception as e:
             print('⚠️ 配置数据源时发生错误:', e)
@@ -92,7 +79,7 @@ def main():
             llm_provider = ta.config.get('llm_provider')
             print(f'🔍 LLM Provider 配置: {llm_provider}')
             if llm_provider != 'custom_openai':
-                print('⚠️ 注意：llm_provider 未设置为 custom_openai，可能不是 Ark')
+                print('⚠️ 注意：llm_provider 未设置为 custom_openai，可能不是智谱 AI')
             else:
                 print('✅ llm_provider 为 custom_openai，继续检查环境与模型信息...')
                 print(f"  CUSTOM_OPENAI_API_KEY 存在: {bool(os.getenv('CUSTOM_OPENAI_API_KEY'))}")
@@ -113,12 +100,7 @@ def main():
 
         print(f'📈 开始分析: {stock_symbol} ({analysis_date})')
         print('⏳ 请稍等，正在执行简化分析流程...')
-        # 传入 progress_callback 以便在节点切换时调整数据源（保证市场用 SQLite，基本面用 AKShare）
-        try:
-            state, decision = ta.propagate(stock_symbol, analysis_date, progress_callback=progress_callback)
-        except NameError:
-            # 若 progress_callback 未定义（异常情况），回退到不带回调的调用
-            state, decision = ta.propagate(stock_symbol, analysis_date)
+        state, decision = ta.propagate(stock_symbol, analysis_date)
 
         print('\n🎯 分析结果:')
         print('----------------------------------------')
@@ -136,9 +118,9 @@ def main():
         import traceback
         traceback.print_exc()
         print('\n请确认:')
-        print('  1. 已在 .env 中配置 ARK_API_KEY')
-        print('  2. Ark 端点可访问')
-        print('  3. 模型名支持 doubao-seed-1-8-251228')
+        print('  1. 已在 .env 中配置 ZHIPUAI_API_KEY')
+        print('  2. 智谱 AI 端点可访问')
+        print('  3. 模型名支持 glm-4-flash')
 
 
 if __name__ == '__main__':
