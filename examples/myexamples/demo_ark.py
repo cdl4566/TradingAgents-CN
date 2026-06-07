@@ -1,12 +1,14 @@
 import os
 import sys
 from pathlib import Path
+from datetime import date
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
+import argparse
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 
@@ -16,6 +18,14 @@ load_dotenv()
 
 def main():
     """使用智谱 AI GLM 模型演示 TradingAgents 简化分析。"""
+    # 先校验必需的命令行参数，避免在初始化前做大量工作
+    parser = argparse.ArgumentParser(description="Run TradingAgents demo for a specific stock")
+    parser.add_argument('--code', '-c', required=True, help='股票代码（例：002049 或 600519）')
+    args = parser.parse_args()
+    stock_symbol = str(args.code).strip().zfill(6)
+    if not stock_symbol:
+        print('❌ 必须提供股票代码参数 --code')
+        return
     print('环境变量加载检查:')
     print(f"ZHIPUAI_API_KEY: {os.getenv('ZHIPUAI_API_KEY')}")
     print(f"CUSTOM_OPENAI_API_KEY: {os.getenv('CUSTOM_OPENAI_API_KEY')}")
@@ -95,8 +105,7 @@ def main():
         except Exception as e:
             print('⚠️ 校验 LLM 配置时发生错误:', e)
 
-        stock_symbol = '002049'
-        analysis_date = '2026-05-10'
+        analysis_date = date.today().isoformat()
 
         print(f'📈 开始分析: {stock_symbol} ({analysis_date})')
         print('⏳ 请稍等，正在执行简化分析流程...')
